@@ -2,23 +2,26 @@
 
 import React from 'react';
 import { useFinance } from '@/context/FinanceContext';
-import { formatCurrency, formatMonthYear } from '@/lib/utils';
+import { formatCurrency } from '@/lib/utils';
 import { 
   Sparkles, 
   Plus, 
   Wallet, 
   Calendar, 
   ArrowUpRight, 
-  ArrowDownRight 
+  ArrowDownRight,
+  Cloud,
+  RefreshCw
 } from 'lucide-react';
 
 interface HeaderProps {
   onOpenNewTransaction: () => void;
   onOpenAiImport: () => void;
+  onOpenCloudSync: () => void;
 }
 
-export function Header({ onOpenNewTransaction, onOpenAiImport }: HeaderProps) {
-  const { selectedMonth, setSelectedMonth, summary } = useFinance();
+export function Header({ onOpenNewTransaction, onOpenAiImport, onOpenCloudSync }: HeaderProps) {
+  const { selectedMonth, setSelectedMonth, summary, isCloudConnected, cloudVaultId, syncStatus } = useFinance();
 
   const months = [
     { value: '2026-11', label: 'Novembro 2026' },
@@ -41,7 +44,7 @@ export function Header({ onOpenNewTransaction, onOpenAiImport }: HeaderProps) {
               <div className="flex items-center gap-2">
                 <span className="font-bold text-lg text-slate-900 tracking-tight">FinControl</span>
                 <span className="text-[10px] font-semibold bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded-full border border-emerald-200">
-                  IA Ready
+                  IA & Cloud
                 </span>
               </div>
               <p className="text-xs text-slate-500">Gestão Financeira & Controle Patrimonial</p>
@@ -50,6 +53,17 @@ export function Header({ onOpenNewTransaction, onOpenAiImport }: HeaderProps) {
 
           {/* Botões Mobile */}
           <div className="flex items-center gap-2 md:hidden">
+            <button
+              onClick={onOpenCloudSync}
+              className={`p-2 rounded-lg border ${
+                isCloudConnected
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                  : 'bg-indigo-50 text-indigo-700 border-indigo-200'
+              }`}
+              title="Sincronização em Nuvem"
+            >
+              <Cloud className="w-4 h-4" />
+            </button>
             <button
               onClick={onOpenAiImport}
               className="p-2 rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200"
@@ -69,6 +83,30 @@ export function Header({ onOpenNewTransaction, onOpenAiImport }: HeaderProps) {
 
         {/* Centro / Direita: Seletor de Período & Ações Rápidas */}
         <div className="flex flex-wrap items-center justify-between md:justify-end gap-3">
+          {/* Botão de Nuvem (Desktop) */}
+          <button
+            onClick={onOpenCloudSync}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${
+              isCloudConnected
+                ? 'bg-emerald-50/80 hover:bg-emerald-100 text-emerald-800 border-emerald-200/80 shadow-xs'
+                : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border-indigo-200/80'
+            }`}
+          >
+            {isCloudConnected ? (
+              <>
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <Cloud className="w-3.5 h-3.5 text-emerald-600" />
+                <span className="max-w-[120px] truncate">{cloudVaultId}</span>
+                {syncStatus === 'syncing' && <RefreshCw className="w-3 h-3 animate-spin text-emerald-600" />}
+              </>
+            ) : (
+              <>
+                <Cloud className="w-3.5 h-3.5 text-indigo-600" />
+                <span>Conectar Nuvem (Multi-Dispositivo)</span>
+              </>
+            )}
+          </button>
+
           {/* Seletor de Mês */}
           <div className="flex items-center gap-2 bg-slate-50 border border-slate-200/80 rounded-xl px-3 py-1.5 text-xs text-slate-700 hover:border-slate-300 transition-colors">
             <Calendar className="w-3.5 h-3.5 text-slate-400" />

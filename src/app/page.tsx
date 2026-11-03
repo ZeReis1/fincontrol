@@ -14,12 +14,14 @@ import { CardsAndAccountsView } from '@/components/cards/CardsAndAccountsView';
 import { BudgetsView } from '@/components/budgets/BudgetsView';
 import { AiImportView } from '@/components/ai/AiImportView';
 import { SettingsView } from '@/components/settings/SettingsView';
+import { CloudSyncModal } from '@/components/cloud/CloudSyncModal';
 import { Transaction } from '@/types/finance';
 import { ArrowRight, Sparkles } from 'lucide-react';
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isCloudModalOpen, setIsCloudModalOpen] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
 
   const handleOpenNewTransaction = () => {
@@ -36,12 +38,17 @@ export default function Home() {
     setActiveTab('ai-importer');
   };
 
+  const handleOpenCloudSync = () => {
+    setIsCloudModalOpen(true);
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-slate-50/70">
       {/* Top Header */}
       <Header
         onOpenNewTransaction={handleOpenNewTransaction}
         onOpenAiImport={handleOpenAiImport}
+        onOpenCloudSync={handleOpenCloudSync}
       />
 
       {/* Navegação por Abas */}
@@ -164,6 +171,12 @@ export default function Home() {
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         transactionToEdit={editingTransaction}
+      />
+
+      {/* Modal de Sincronização em Nuvem (Multi-Dispositivo) */}
+      <CloudSyncModal
+        isOpen={isCloudModalOpen}
+        onClose={() => setIsCloudModalOpen(false)}
       />
     </div>
   );

@@ -12,19 +12,58 @@ import {
   GitBranch, 
   Globe, 
   ShieldCheck, 
-  HelpCircle 
+  Cloud,
+  Smartphone,
+  Monitor,
+  RefreshCw
 } from 'lucide-react';
 
 export function SettingsView() {
-  const { userApiKey, setUserApiKey, exportDataJson, importDataJson, resetToSeedData, clearAllData } = useFinance();
+  const { 
+    userApiKey, 
+    setUserApiKey, 
+    exportDataJson, 
+    importDataJson, 
+    resetToSeedData, 
+    clearAllData,
+    cloudVaultId,
+    cloudPin,
+    isCloudConnected,
+    connectCloudVault,
+    disconnectCloudVault,
+    syncWithCloud
+  } = useFinance();
+
   const [apiKeyInput, setApiKeyInput] = useState(userApiKey || '');
   const [saveSuccess, setSaveSuccess] = useState(false);
+
+  // Cloud settings state
+  const [vaultNameInput, setVaultNameInput] = useState(cloudVaultId || '');
+  const [vaultPinInput, setVaultPinInput] = useState(cloudPin || '');
+  const [cloudMsg, setCloudMsg] = useState<{ text: string; error?: boolean } | null>(null);
+  const [syncing, setSyncing] = useState(false);
 
   const handleSaveKey = (e: React.FormEvent) => {
     e.preventDefault();
     setUserApiKey(apiKeyInput.trim());
     setSaveSuccess(true);
     setTimeout(() => setSaveSuccess(false), 2500);
+  };
+
+  const handleConnectCloud = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!vaultNameInput.trim()) return;
+
+    setSyncing(true);
+    setCloudMsg(null);
+    const res = await connectCloudVault(vaultNameInput.trim(), vaultPinInput.trim());
+    setSyncing(false);
+
+    if (res.success) {
+      setCloudMsg({ text: res.message || 'Cofre conectado com sucesso!' });
+    } else {
+      setCloudMsg({ text: res.message || 'Erro ao conectar.', error: true });
+    }
   };
 
   const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -48,7 +87,112 @@ export function SettingsView() {
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
-      {/* 1. CHAVE DE INTELIGÊNCIA ARTIFICIAL */}
+      {/* 1. SINCRONIZAÇÃO EM NUVEM (MULTI-DISPOSITIVO) */}
+      <div className="p-6 bg-white rounded-2xl border border-indigo-200/80 shadow-xs space-y-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
+            <Cloud className="w-5 h-5" />
+          </div>
+          <div>
+            <h3 className="font-bold text-slate-900 text-base">Sincronização em Nuvem (Multi-Dispositivo)</h3>
+            <p className="text-xs text-slate-500">
+              Mantenha seus dados 100% conectados e atualizados em tempo real entre computadores, celulares e tablets
+            </p>
+          </div>
+        </div>
+
+        {cloudMsg && (
+          <div
+            className={`p-3 rounded-xl text-xs font-semibold ${
+              cloudMsg.error ? 'bg-rose-50 text-rose-700 border border-rose-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+            }`}
+          >
+            {cloudMsg.text}
+          </div>
+        )}
+
+        {isCloudConnected ? (
+          <div className="p-4 rounded-xl bg-emerald-50/70 border border-emerald-200 space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-xs font-bold text-emerald-900 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  Cofre Ativo e Conectado: <strong className="font-mono text-emerald-700">{cloudVaultId}</strong>
+                </span>
+                <p className="text-[11px] text-slate-600 mt-1">
+                  Para abrir em outro computador ou no celular: basta acessar o site, clicar em &quot;Nuvem&quot; e digitar <strong>{cloudVaultId}</strong>.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setSyncing(true);
+                    await syncWithCloud();
+                    setSyncing(false);
+                    alert('Sincronizado com a nuvem com sucesso!');
+                  }}
+                  className="px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-900 text-white hover:bg-slate-800 transition-colors flex items-center gap-1.5"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} />
+                  Sincronizar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (confirm('Desconectar a nuvem deste computador?')) disconnectCloudVault();
+                  }}
+                  className="px-3 py-1.5 rounded-xl text-xs font-semibold text-rose-600 hover:bg-rose-50 transition-colors"
+                >
+                  Desconectar
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <form onSubmit={handleConnectCloud} className="space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Identificador / Nome do Cofre
+                </label>
+                <input
+                  type="text"
+                  value={vaultNameInput}
+                  onChange={(e) => setVaultNameInput(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''))}
+                  placeholder="Ex: jhowzeh"
+                  required
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-mono font-bold text-slate-900"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Senha / PIN (Opcional)
+                </label>
+                <input
+                  type="password"
+                  value={vaultPinInput}
+                  onChange={(e) => setVaultPinInput(e.target.value)}
+                  placeholder="Ex: 1234"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-mono text-slate-900"
+                />
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={syncing || !vaultNameInput.trim()}
+              className="px-4 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs transition-colors flex items-center gap-1.5"
+            >
+              <Cloud className="w-4 h-4" />
+              {syncing ? 'Conectando...' : 'Conectar e Ativar Nuvem'}
+            </button>
+          </form>
+        )}
+      </div>
+
+      {/* 2. CHAVE DE INTELIGÊNCIA ARTIFICIAL */}
       <div className="p-6 bg-white rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
@@ -107,7 +251,7 @@ export function SettingsView() {
         </form>
       </div>
 
-      {/* 2. BACKUP E RESTAURAÇÃO DE DADOS */}
+      {/* 3. BACKUP E RESTAURAÇÃO DE DADOS */}
       <div className="p-6 bg-white rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
         <div>
           <h3 className="font-bold text-slate-900 text-base">Backup & Portabilidade de Dados</h3>
@@ -149,7 +293,7 @@ export function SettingsView() {
         </div>
       </div>
 
-      {/* 3. GERENCIAMENTO DE DADOS */}
+      {/* 4. GERENCIAMENTO DE DADOS */}
       <div className="p-6 bg-white rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
         <div>
           <h3 className="font-bold text-slate-900 text-base">Ações do Sistema</h3>
@@ -183,32 +327,6 @@ export function SettingsView() {
             Zerar Todos os Dados
           </button>
         </div>
-      </div>
-
-      {/* 4. GUIA VERCEL & GITHUB */}
-      <div className="p-6 bg-slate-900 text-white rounded-2xl shadow-md space-y-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center">
-            <Globe className="w-5 h-5 text-emerald-400" />
-          </div>
-          <div>
-            <h3 className="font-bold text-white text-base">Publicação no GitHub & Vercel</h3>
-            <p className="text-xs text-slate-400">Pronto para rodar na nuvem em 3 passos simples</p>
-          </div>
-        </div>
-
-        <div className="space-y-2 text-xs text-slate-300 font-mono bg-black/40 p-4 rounded-xl border border-white/10">
-          <p className="text-slate-400 font-sans font-semibold mb-2">Comandos para enviar ao GitHub:</p>
-          <p className="text-emerald-400">git add .</p>
-          <p className="text-emerald-400">git commit -m &quot;feat: FinControl Sistema Financeiro com IA&quot;</p>
-          <p className="text-emerald-400">git branch -M main</p>
-          <p className="text-emerald-400">git remote add origin https://github.com/SEU_USUARIO/fincontrol.git</p>
-          <p className="text-emerald-400">git push -u origin main</p>
-        </div>
-
-        <p className="text-xs text-slate-400">
-          Depois, basta importar o repositório no <strong className="text-white">vercel.com</strong> e clicar em <strong>Deploy</strong>. O site ficará no ar com HTTPS gratuito e velocidade instantânea.
-        </p>
       </div>
     </div>
   );

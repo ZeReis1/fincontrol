@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, useRef } from 'react';
 import {
   Transaction,
   Account,
@@ -30,6 +30,16 @@ interface FinanceContextType {
   summary: FinancialSummary;
   userApiKey: string;
   setUserApiKey: (key: string) => void;
+
+  // Sincronização em Nuvem (Multi-Dispositivo)
+  cloudVaultId: string;
+  cloudPin: string;
+  isCloudConnected: boolean;
+  lastSyncTime: string | null;
+  syncStatus: 'idle' | 'syncing' | 'synced' | 'error';
+  connectCloudVault: (vaultId: string, pin?: string) => Promise<{ success: boolean; message?: string }>;
+  disconnectCloudVault: () => void;
+  syncWithCloud: () => Promise<void>;
 
   // Ações de Transações
   addTransaction: (data: Omit<Transaction, 'id'>) => void;
@@ -65,6 +75,9 @@ const FinanceContext = createContext<FinanceContextType | undefined>(undefined);
 
 const STORAGE_KEY = 'fincontrol_data_v1';
 const API_KEY_STORAGE = 'fincontrol_gemini_key';
+const CLOUD_VAULT_KEY = 'fincontrol_cloud_vault_id';
+const CLOUD_PIN_KEY = 'fincontrol_cloud_pin';
+const CLOUD_LAST_SYNC_KEY = 'fincontrol_last_sync_time';
 
 export function FinanceProvider({ children }: { children: React.ReactNode }) {
   const [isLoaded, setIsLoaded] = useState(false);
@@ -76,14 +89,33 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   const [selectedMonth, setSelectedMonth] = useState<string>('2026-11');
   const [userApiKey, setUserApiKeyState] = useState<string>('');
 
+  // Nuvem Multi-Dispositivo
+  const [cloudVaultId, setCloudVaultId] = useState<string>('');
+  const [cloudPin, setCloudPin] = useState<string>('');
+  const [isCloudConnected, setIsCloudConnected] = useState<boolean>(false);
+  const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'error'>('idle');
+
+  const syncTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
   // Carregar dados salvos ou inicializar com SEED
   useEffect(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
       const storedKey = localStorage.getItem(API_KEY_STORAGE);
+      const storedVaultId = localStorage.getItem(CLOUD_VAULT_KEY);
+      const storedPin = localStorage.getItem(CLOUD_PIN_KEY);
+      const storedLastSync = localStorage.getItem(CLOUD_LAST_SYNC_KEY);
 
       if (storedKey) {
         setUserApiKeyState(storedKey);
+      }
+
+      if (storedVaultId) {
+        setCloudVaultId(storedVaultId);
+        setCloudPin(storedPin || '');
+        setIsCloudConnected(true);
+        setLastSyncTime(storedLastSync);
       }
 
       if (stored) {
@@ -99,6 +131,35 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
         setAccounts(DEFAULT_ACCOUNTS);
         setCreditCards(DEFAULT_CREDIT_CARDS);
         setCategories(DEFAULT_CATEGORIES);
+      }
+
+      // Se já possui cofre na nuvem configurado, puxar a versão mais recente da nuvem imediatamente
+      if (storedVaultId) {
+        fetch('/api/cloud/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'pull',
+            vaultId: storedVaultId,
+            pin: storedPin || '',
+          }),
+        })
+          .then((res) => res.json())
+          .then((cloudData) => {
+            if (cloudData.success && cloudData.data) {
+              const d = cloudData.data;
+              if (Array.isArray(d.transactions)) setTransactions(d.transactions);
+              if (Array.isArray(d.accounts)) setAccounts(d.accounts);
+              if (Array.isArray(d.creditCards)) setCreditCards(d.creditCards);
+              if (Array.isArray(d.categories)) setCategories(d.categories);
+              if (Array.isArray(d.budgets)) setBudgets(d.budgets);
+              setLastSyncTime(cloudData.updatedAt || new Date().toISOString());
+              setSyncStatus('synced');
+            }
+          })
+          .catch((err) => {
+            console.warn('Falha no auto-pull da nuvem:', err);
+          });
       }
     } catch (e) {
       console.error('Erro ao ler dados do localStorage:', e);
@@ -126,10 +187,41 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
         budgets,
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
+
+      // Se a nuvem estiver conectada, sincronizar automaticamente (debounced)
+      if (isCloudConnected && cloudVaultId) {
+        if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+        setSyncStatus('syncing');
+
+        syncTimeoutRef.current = setTimeout(() => {
+          fetch('/api/cloud/sync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'push',
+              vaultId: cloudVaultId,
+              pin: cloudPin,
+              data: dataToSave,
+            }),
+          })
+            .then((res) => res.json())
+            .then((resData) => {
+              if (resData.success) {
+                const now = resData.updatedAt || new Date().toISOString();
+                setLastSyncTime(now);
+                setSyncStatus('synced');
+                localStorage.setItem(CLOUD_LAST_SYNC_KEY, now);
+              } else {
+                setSyncStatus('error');
+              }
+            })
+            .catch(() => setSyncStatus('error'));
+        }, 1500);
+      }
     } catch (e) {
       console.error('Erro ao salvar no localStorage:', e);
     }
-  }, [transactions, accounts, creditCards, categories, budgets, isLoaded]);
+  }, [transactions, accounts, creditCards, categories, budgets, isLoaded, isCloudConnected, cloudVaultId, cloudPin]);
 
   const setUserApiKey = (key: string) => {
     setUserApiKeyState(key);
@@ -140,13 +232,141 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  // Conectar a um cofre na nuvem existente ou criar novo
+  const connectCloudVault = async (vaultId: string, pin: string = ''): Promise<{ success: boolean; message?: string }> => {
+    try {
+      setSyncStatus('syncing');
+      const cleanId = vaultId.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+
+      // Tenta fazer pull
+      const pullRes = await fetch('/api/cloud/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'pull', vaultId: cleanId, pin }),
+      });
+
+      const pullJson = await pullRes.json();
+
+      if (pullJson.success && pullJson.data) {
+        // Encontrou cofre na nuvem: carregar dados
+        const d = pullJson.data;
+        if (Array.isArray(d.transactions)) setTransactions(d.transactions);
+        if (Array.isArray(d.accounts)) setAccounts(d.accounts);
+        if (Array.isArray(d.creditCards)) setCreditCards(d.creditCards);
+        if (Array.isArray(d.categories)) setCategories(d.categories);
+        if (Array.isArray(d.budgets)) setBudgets(d.budgets);
+
+        setCloudVaultId(cleanId);
+        setCloudPin(pin);
+        setIsCloudConnected(true);
+        setLastSyncTime(pullJson.updatedAt);
+        setSyncStatus('synced');
+
+        localStorage.setItem(CLOUD_VAULT_KEY, cleanId);
+        localStorage.setItem(CLOUD_PIN_KEY, pin);
+        localStorage.setItem(CLOUD_LAST_SYNC_KEY, pullJson.updatedAt);
+
+        return { success: true, message: 'Cofre conectado e dados sincronizados com sucesso!' };
+      }
+
+      if (pullJson.invalidPin) {
+        setSyncStatus('error');
+        return { success: false, message: 'Senha/PIN incorreto para este cofre.' };
+      }
+
+      // Se não encontrou, cria o cofre na nuvem com os dados atuais
+      const currentData = {
+        transactions,
+        accounts,
+        creditCards,
+        categories,
+        budgets,
+      };
+
+      const pushRes = await fetch('/api/cloud/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'push', vaultId: cleanId, pin, data: currentData }),
+      });
+
+      const pushJson = await pushRes.json();
+
+      if (pushJson.success) {
+        setCloudVaultId(cleanId);
+        setCloudPin(pin);
+        setIsCloudConnected(true);
+        setLastSyncTime(pushJson.updatedAt);
+        setSyncStatus('synced');
+
+        localStorage.setItem(CLOUD_VAULT_KEY, cleanId);
+        localStorage.setItem(CLOUD_PIN_KEY, pin);
+        localStorage.setItem(CLOUD_LAST_SYNC_KEY, pushJson.updatedAt);
+
+        return { success: true, message: 'Novo cofre em nuvem criado e sincronizado com sucesso!' };
+      }
+
+      setSyncStatus('error');
+      return { success: false, message: pushJson.error || 'Falha ao conectar cofre.' };
+    } catch (err: any) {
+      setSyncStatus('error');
+      return { success: false, message: err.message || 'Erro de conexão.' };
+    }
+  };
+
+  const disconnectCloudVault = () => {
+    setIsCloudConnected(false);
+    setCloudVaultId('');
+    setCloudPin('');
+    setSyncStatus('idle');
+    localStorage.removeItem(CLOUD_VAULT_KEY);
+    localStorage.removeItem(CLOUD_PIN_KEY);
+    localStorage.removeItem(CLOUD_LAST_SYNC_KEY);
+  };
+
+  const syncWithCloud = async () => {
+    if (!cloudVaultId) return;
+    setSyncStatus('syncing');
+    try {
+      const dataToSave = {
+        transactions,
+        accounts,
+        creditCards,
+        categories,
+        budgets,
+      };
+
+      const res = await fetch('/api/cloud/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'push',
+          vaultId: cloudVaultId,
+          pin: cloudPin,
+          data: dataToSave,
+        }),
+      });
+
+      const resJson = await res.json();
+      if (resJson.success) {
+        const now = resJson.updatedAt || new Date().toISOString();
+        setLastSyncTime(now);
+        setSyncStatus('synced');
+        localStorage.setItem(CLOUD_LAST_SYNC_KEY, now);
+      } else {
+        setSyncStatus('error');
+      }
+    } catch (e) {
+      setSyncStatus('error');
+    }
+  };
+
   // Filtrar transações pelo mês selecionado
   const filteredTransactions = useMemo(() => {
     if (selectedMonth === 'all') {
       return [...transactions].sort((a, b) => b.date.localeCompare(a.date));
     }
     return transactions
-      .filter(tx => tx.date.startsWith(selectedMonth))
+      .filter((tx) => tx.date.startsWith(selectedMonth))
       .sort((a, b) => b.date.localeCompare(a.date));
   }, [transactions, selectedMonth]);
 
@@ -157,7 +377,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     let monthlyInvestments = 0;
     let monthlyLosses = 0;
 
-    filteredTransactions.forEach(tx => {
+    filteredTransactions.forEach((tx) => {
       if (tx.status === 'completed') {
         if (tx.type === 'income') monthlyIncome += tx.amount;
         else if (tx.type === 'expense') monthlyExpense += tx.amount;
@@ -167,7 +387,6 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     });
 
     const totalBalance = accounts.reduce((acc, curr) => acc + curr.balance, 0);
-    // Poupança líquida = Receitas - (Despesas + Prejuízos)
     const netSavings = monthlyIncome - (monthlyExpense + monthlyLosses);
     const savingsRate = monthlyIncome > 0 ? ((monthlyIncome - monthlyExpense - monthlyLosses) / monthlyIncome) * 100 : 0;
 
@@ -189,13 +408,12 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       id: generateId(),
     };
 
-    setTransactions(prev => [newTx, ...prev]);
+    setTransactions((prev) => [newTx, ...prev]);
 
-    // Atualiza saldo da conta ou cartão se status for completed
     if (newTx.status === 'completed') {
       if (newTx.accountId) {
-        setAccounts(prev =>
-          prev.map(acc => {
+        setAccounts((prev) =>
+          prev.map((acc) => {
             if (acc.id !== newTx.accountId) return acc;
             let diff = 0;
             if (newTx.type === 'income') diff = newTx.amount;
@@ -205,8 +423,8 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
         );
       }
       if (newTx.creditCardId) {
-        setCreditCards(prev =>
-          prev.map(card => {
+        setCreditCards((prev) =>
+          prev.map((card) => {
             if (card.id !== newTx.creditCardId) return card;
             return { ...card, availableLimit: Math.max(0, card.availableLimit - newTx.amount) };
           })
@@ -216,13 +434,11 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   };
 
   const updateTransaction = (id: string, data: Partial<Transaction>) => {
-    setTransactions(prev =>
-      prev.map(tx => (tx.id === id ? { ...tx, ...data } : tx))
-    );
+    setTransactions((prev) => prev.map((tx) => (tx.id === id ? { ...tx, ...data } : tx)));
   };
 
   const deleteTransaction = (id: string) => {
-    setTransactions(prev => prev.filter(tx => tx.id !== id));
+    setTransactions((prev) => prev.filter((tx) => tx.id !== id));
   };
 
   const addBatchAiTransactions = (
@@ -231,8 +447,8 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     targetCardId?: string
   ) => {
     const newTransactions: Transaction[] = items
-      .filter(item => item.selected)
-      .map(item => ({
+      .filter((item) => item.selected)
+      .map((item) => ({
         id: generateId(),
         date: item.date,
         description: item.description,
@@ -248,58 +464,57 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
 
     if (newTransactions.length === 0) return;
 
-    setTransactions(prev => [...newTransactions, ...prev]);
+    setTransactions((prev) => [...newTransactions, ...prev]);
 
-    // Atualizar saldo em lote
     if (targetAccountId) {
       const netAmount = newTransactions.reduce((acc, tx) => {
         if (tx.type === 'income') return acc + tx.amount;
         return acc - tx.amount;
       }, 0);
 
-      setAccounts(prev =>
-        prev.map(a => (a.id === targetAccountId ? { ...a, balance: a.balance + netAmount } : a))
+      setAccounts((prev) =>
+        prev.map((a) => (a.id === targetAccountId ? { ...a, balance: a.balance + netAmount } : a))
       );
     }
   };
 
   // Contas & Cartões CRUD
   const addAccount = (data: Omit<Account, 'id'>) => {
-    setAccounts(prev => [...prev, { ...data, id: generateId() }]);
+    setAccounts((prev) => [...prev, { ...data, id: generateId() }]);
   };
 
   const updateAccount = (id: string, data: Partial<Account>) => {
-    setAccounts(prev => prev.map(a => (a.id === id ? { ...a, ...data } : a)));
+    setAccounts((prev) => prev.map((a) => (a.id === id ? { ...a, ...data } : a)));
   };
 
   const deleteAccount = (id: string) => {
-    setAccounts(prev => prev.filter(a => a.id !== id));
+    setAccounts((prev) => prev.filter((a) => a.id !== id));
   };
 
   const addCreditCard = (data: Omit<CreditCard, 'id'>) => {
-    setCreditCards(prev => [...prev, { ...data, id: generateId() }]);
+    setCreditCards((prev) => [...prev, { ...data, id: generateId() }]);
   };
 
   const updateCreditCard = (id: string, data: Partial<CreditCard>) => {
-    setCreditCards(prev => prev.map(c => (c.id === id ? { ...c, ...data } : c)));
+    setCreditCards((prev) => prev.map((c) => (c.id === id ? { ...c, ...data } : c)));
   };
 
   const deleteCreditCard = (id: string) => {
-    setCreditCards(prev => prev.filter(c => c.id !== id));
+    setCreditCards((prev) => prev.filter((c) => c.id !== id));
   };
 
   // Categorias & Orçamentos
   const addCategory = (data: Omit<Category, 'id'>) => {
-    setCategories(prev => [...prev, { ...data, id: generateId() }]);
+    setCategories((prev) => [...prev, { ...data, id: generateId() }]);
   };
 
   const updateCategory = (id: string, data: Partial<Category>) => {
-    setCategories(prev => prev.map(c => (c.id === id ? { ...c, ...data } : c)));
+    setCategories((prev) => prev.map((c) => (c.id === id ? { ...c, ...data } : c)));
   };
 
   const setCategoryBudget = (categoryId: string, limit: number) => {
-    setCategories(prev =>
-      prev.map(c => (c.id === categoryId ? { ...c, budgetLimit: limit } : c))
+    setCategories((prev) =>
+      prev.map((c) => (c.id === categoryId ? { ...c, budgetLimit: limit } : c))
     );
   };
 
@@ -366,6 +581,14 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
         summary,
         userApiKey,
         setUserApiKey,
+        cloudVaultId,
+        cloudPin,
+        isCloudConnected,
+        lastSyncTime,
+        syncStatus,
+        connectCloudVault,
+        disconnectCloudVault,
+        syncWithCloud,
         addTransaction,
         updateTransaction,
         deleteTransaction,
