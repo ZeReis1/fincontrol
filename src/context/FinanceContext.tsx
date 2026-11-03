@@ -108,6 +108,9 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       setCategories(DEFAULT_CATEGORIES);
     } finally {
       setIsLoaded(true);
+      if (typeof window !== 'undefined' && navigator.storage && navigator.storage.persist) {
+        navigator.storage.persist().catch(() => {});
+      }
     }
   }, []);
 
