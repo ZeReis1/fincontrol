@@ -27,20 +27,32 @@ export async function POST(req: NextRequest) {
         mimeType = file.type || 'application/octet-stream';
         const buffer = await file.arrayBuffer();
 
+        // 1. Arquivos OFX bancários
         if (file.name.endsWith('.ofx')) {
           const text = new TextDecoder('iso-8859-1').decode(buffer);
           const parsed = parseOfx(text);
           return NextResponse.json({ success: true, transactions: parsed, source: 'ofx-parser' });
         }
 
+        // 2. Arquivos CSV
         if (file.name.endsWith('.csv')) {
           const text = new TextDecoder('utf-8').decode(buffer);
           const parsed = parseCsv(text);
           return NextResponse.json({ success: true, transactions: parsed, source: 'csv-parser' });
         }
 
-        // Se for imagem ou PDF ou texto TXT
-        if (mimeType.includes('text') || file.name.endsWith('.txt')) {
+        // 3. Arquivos PDF (Faturas C6, Nubank, Itaú, Inter, etc)
+        if (file.name.endsWith('.pdf') || mimeType.includes('pdf')) {
+          try {
+            const { extractText } = await import('unpdf');
+            const pdfResult = await extractText(new Uint8Array(buffer));
+            const pages = pdfResult.text;
+            textContent = Array.isArray(pages) ? pages.join('\n') : pages || '';
+          } catch (pdfErr) {
+            console.warn('Falha no unpdf, prosseguindo com base64:', pdfErr);
+          }
+          fileBase64 = Buffer.from(buffer).toString('base64');
+        } else if (mimeType.includes('text') || file.name.endsWith('.txt')) {
           textContent = new TextDecoder('utf-8').decode(buffer);
         } else {
           fileBase64 = Buffer.from(buffer).toString('base64');
@@ -62,37 +74,38 @@ export async function POST(req: NextRequest) {
         const ai = new GoogleGenAI({ apiKey });
 
         const prompt = `
-Você é um especialista em finanças pessoais e processamento de faturas e extratos bancários brasileiros (Nubank, Itaú, Inter, Bradesco, C6, etc).
-Analise com precisão cirúrgica o arquivo ou texto fornecido e extraia TODAS as transações financeiras.
+Você é um especialista em finanças pessoais e processamento de faturas e extratos bancários brasileiros (Nubank, C6 Bank, Itaú, Inter, Bradesco, etc).
+Analise com precisão cirúrgica o documento fornecido e extraia TODAS as transações financeiras de compras e pagamentos.
 
 Categorias disponíveis no sistema:
 ${DEFAULT_CATEGORIES.map(c => `- ${c.name} (tipo: ${c.type}, id: ${c.id})`).join('\n')}
 
 Para cada transação identificada, retorne um objeto JSON contendo:
-- "date": string no formato "YYYY-MM-DD" (se o ano não estiver especificado, assuma o ano corrente 2026).
-- "description": string com o nome limpo e amigável do estabelecimento ou descrição (ex: transforme "PAG*Uber BR" em "Uber", "IOF DEBITO" em "IOF").
-- "amount": número positivo (float, ex: 45.90) com ponto como separador decimal.
-- "type": exatamente um destes: "expense" (despesa), "income" (receita/salário/pix recebido), "investment" (aporte/investimento/tesouro/ações), ou "loss" (prejuízo/perda em trade/multa pesada/juros por atraso).
+- "date": string no formato "YYYY-MM-DD".
+- "description": string com o nome limpo e amigável do estabelecimento (ex: "SUPERMERCAD DO JANIO", "AUTO POSTO INDUSTRIAL", "PADARIA MORRO CHIC", "GOL LINHAS").
+- "amount": número positivo (float, ex: 47.26).
+- "type": exatamente um destes: "expense" (despesa), "income" (receita/estorno), "investment" (aporte), ou "loss" (prejuízo/multa).
 - "categoryName": o nome de uma das categorias listadas acima que melhor se encaixe.
 - "categoryId": o id correspondente da categoria listada acima.
 
-Retorne APENAS um array JSON puro no formato:
+Retorne APENAS um array JSON puro:
 [
   {
-    "date": "2026-11-05",
-    "description": "Supermercado Pão de Açúcar",
-    "amount": 142.50,
+    "date": "2026-09-06",
+    "description": "SUPERMERCAD DO JANIO",
+    "amount": 47.26,
     "type": "expense",
     "categoryName": "Supermercado & Feira",
     "categoryId": "cat_supermercado"
   }
 ]
-Não inclua explicações ou markdown com três crases se puder evitar, apenas o JSON puro.
 `;
 
         let contents: any = prompt;
 
-        if (fileBase64) {
+        if (textContent && textContent.length > 50) {
+          contents = `${prompt}\n\nTEXTO EXTRAÍDO DA FATURA:\n${textContent}`;
+        } else if (fileBase64) {
           contents = [
             {
               inlineData: {
@@ -102,8 +115,6 @@ Não inclua explicações ou markdown com três crases se puder evitar, apenas o
             },
             prompt,
           ];
-        } else if (textContent) {
-          contents = `${prompt}\n\nTEXTO DO EXTRATO:\n${textContent}`;
         }
 
         const response = await ai.models.generateContent({
@@ -112,11 +123,10 @@ Não inclua explicações ou markdown com três crases se puder evitar, apenas o
         });
 
         const rawReply = response.text || '';
-        // Limpar possíveis crases de markdown
         const cleanedJson = rawReply.replace(/```json/gi, '').replace(/```/gi, '').trim();
 
         const jsonArray = JSON.parse(cleanedJson);
-        if (Array.isArray(jsonArray)) {
+        if (Array.isArray(jsonArray) && jsonArray.length > 0) {
           const mapped: AiParsedTransaction[] = jsonArray.map((item: any) => ({
             id: generateId(),
             date: item.date || new Date().toISOString().split('T')[0],
@@ -140,15 +150,16 @@ Não inclua explicações ou markdown com três crases se puder evitar, apenas o
       }
     }
 
-    // Fallback: Se não tem chave ou a IA falhou, aplicar os parsers heurísticos locais
-    if (textContent) {
+    // Fallback: Se não tem chave ou a IA falhou, aplicar o parser nativo local no texto extraído
+    if (textContent && textContent.length > 5) {
       const parsed = parseRawText(textContent);
-      return NextResponse.json({
-        success: true,
-        transactions: parsed,
-        source: 'heuristic-nlp',
-        note: !apiKey ? 'Processado localmente por IA heurística. Adicione sua chave Gemini para leitura de faturas em PDF/imagem complexas.' : undefined,
-      });
+      if (parsed.length > 0) {
+        return NextResponse.json({
+          success: true,
+          transactions: parsed,
+          source: 'motor-c6-faturas',
+        });
+      }
     }
 
     return NextResponse.json({

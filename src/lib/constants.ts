@@ -271,18 +271,23 @@ export const SEED_TRANSACTIONS: Transaction[] = [
 // Mapeamento heurístico de palavras-chave para categorias automáticas (IA Fallback)
 export const KEYWORD_CATEGORY_RULES: { keywords: string[]; categoryId: string; type: Transaction['type'] }[] = [
   {
-    keywords: ['ifood', 'ubereats', 'rappi', 'restaurante', 'mcdonald', 'burger', 'bk', 'pizza', 'padaria', 'lanches', 'outback', 'subway', 'bar', 'cafeteria', 'starbucks'],
+    keywords: ['ifood', 'ubereats', 'rappi', 'restaurante', 'mcdonald', 'burger', 'bk', 'pizza', 'pizzaria', 'esfiha', 'esfiharia', 'padaria', 'lanches', 'outback', 'subway', 'bar', 'cafeteria', 'starbucks', 'cafe', 'sorveteria', 'doceria', 'churrascaria', 'pastel'],
     categoryId: 'cat_alimentacao',
     type: 'expense',
   },
   {
-    keywords: ['carrefour', 'assai', 'atacadao', 'pao de acucar', 'supermercado', 'mercado', 'hortifruti', 'feira', 'sacolao', 'dia supermercado'],
+    keywords: ['carrefour', 'assai', 'atacadao', 'pao de acucar', 'supermercado', 'supermercad', 'mercado', 'mercadinho', 'hortifruti', 'feira', 'sacolao', 'dia supermercado'],
     categoryId: 'cat_supermercado',
     type: 'expense',
   },
   {
-    keywords: ['uber', '99app', '99pop', 'posto', 'shell', 'ipiranga', 'br petrobras', 'combustivel', 'pedagio', 'sem parar', 'veloe', 'estacionamento', 'auto posto', 'gasolina'],
+    keywords: ['uber', '99app', '99pop', 'posto', 'shell', 'ipiranga', 'br petrobras', 'combustivel', 'pedagio', 'sem parar', 'veloe', 'estacionamento', 'auto posto', 'gasolina', 'motos', 'oficina', 'mecanica', 'gol linhas', 'latam', 'azul', 'zupper', 'passagem', 'voo'],
     categoryId: 'cat_transporte',
+    type: 'expense',
+  },
+  {
+    keywords: ['shopee', 'shein', 'aliexpress', 'mercado livre', 'mercadolivre', 'amazon compras', 'lojas', 'renner', 'riachuelo', 'zara', 'vestuario', 'calcados'],
+    categoryId: 'cat_compras',
     type: 'expense',
   },
   {
