@@ -25,18 +25,21 @@ export async function POST(req: NextRequest) {
 
       if (file) {
         mimeType = file.type || 'application/octet-stream';
-        const buffer = await file.arrayBuffer();
+        const arrayBuf = await file.arrayBuffer();
+        // Gerar Buffer do Node e base64 antes de qualquer outra operação
+        const nodeBuffer = Buffer.from(arrayBuf);
+        fileBase64 = nodeBuffer.toString('base64');
 
         // 1. Arquivos OFX bancários
         if (file.name.endsWith('.ofx')) {
-          const text = new TextDecoder('iso-8859-1').decode(buffer);
+          const text = new TextDecoder('iso-8859-1').decode(nodeBuffer);
           const parsed = parseOfx(text);
           return NextResponse.json({ success: true, transactions: parsed, source: 'ofx-parser' });
         }
 
         // 2. Arquivos CSV
         if (file.name.endsWith('.csv')) {
-          const text = new TextDecoder('utf-8').decode(buffer);
+          const text = new TextDecoder('utf-8').decode(nodeBuffer);
           const parsed = parseCsv(text);
           return NextResponse.json({ success: true, transactions: parsed, source: 'csv-parser' });
         }
@@ -45,17 +48,16 @@ export async function POST(req: NextRequest) {
         if (file.name.endsWith('.pdf') || mimeType.includes('pdf')) {
           try {
             const { extractText } = await import('unpdf');
-            const pdfResult = await extractText(new Uint8Array(buffer));
+            // Passar uma cópia isolada de bytes para o unpdf para prevenir que desanexe o buffer
+            const pdfCopy = new Uint8Array(nodeBuffer.buffer.slice(nodeBuffer.byteOffset, nodeBuffer.byteOffset + nodeBuffer.byteLength));
+            const pdfResult = await extractText(pdfCopy);
             const pages = pdfResult.text;
             textContent = Array.isArray(pages) ? pages.join('\n') : pages || '';
           } catch (pdfErr) {
-            console.warn('Falha no unpdf, prosseguindo com base64:', pdfErr);
+            console.warn('Falha no unpdf:', pdfErr);
           }
-          fileBase64 = Buffer.from(buffer).toString('base64');
         } else if (mimeType.includes('text') || file.name.endsWith('.txt')) {
-          textContent = new TextDecoder('utf-8').decode(buffer);
-        } else {
-          fileBase64 = Buffer.from(buffer).toString('base64');
+          textContent = new TextDecoder('utf-8').decode(nodeBuffer);
         }
       }
     } else {
