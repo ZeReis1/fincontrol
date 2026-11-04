@@ -11,9 +11,8 @@ import {
   Check, 
   AlertCircle, 
   CheckCircle2, 
-  FileSpreadsheet, 
-  Image as ImageIcon, 
-  ArrowRight, 
+  Key,
+  ShieldCheck,
   Building2, 
   CreditCard as CardIcon 
 } from 'lucide-react';
@@ -23,7 +22,7 @@ interface AiImportViewProps {
 }
 
 export function AiImportView({ onSuccessRedirect }: AiImportViewProps) {
-  const { categories, accounts, creditCards, addBatchAiTransactions, userApiKey } = useFinance();
+  const { categories, accounts, creditCards, addBatchAiTransactions, userApiKey, setUserApiKey } = useFinance();
 
   const [file, setFile] = useState<File | null>(null);
   const [pastedText, setPastedText] = useState('');
@@ -34,6 +33,17 @@ export function AiImportView({ onSuccessRedirect }: AiImportViewProps) {
   const [targetCardId, setTargetCardId] = useState('');
   const [importSuccessMessage, setImportSuccessMessage] = useState<string | null>(null);
   const [inputMode, setInputMode] = useState<'file' | 'text'>('file');
+
+  // Chave rápida de IA
+  const [tempApiKey, setTempApiKey] = useState(userApiKey || '');
+  const [keySaved, setKeySaved] = useState(false);
+
+  const handleSaveApiKey = (e: React.FormEvent) => {
+    e.preventDefault();
+    setUserApiKey(tempApiKey.trim());
+    setKeySaved(true);
+    setTimeout(() => setKeySaved(false), 2500);
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -76,13 +86,13 @@ export function AiImportView({ onSuccessRedirect }: AiImportViewProps) {
 
       if (data.success && Array.isArray(data.transactions) && data.transactions.length > 0) {
         setExtractedList(data.transactions);
-        setSourceEngine(data.source === 'gemini-ai' ? 'Google Gemini AI' : 'Motor NLP Heurístico');
+        setSourceEngine(data.source === 'gemini-ai' ? 'Google Gemini 2.5 Flash (IA)' : 'Motor Especializado em Faturas (Local)');
       } else {
-        alert(data.error || 'Nenhuma transação foi identificada no conteúdo enviado. Tente novamente.');
+        alert(data.error || 'Nenhuma transação real foi identificada no documento. Verifique o arquivo e tente novamente.');
       }
     } catch (err: any) {
       console.error('Erro ao processar:', err);
-      alert('Ocorreu um erro no processamento. Verifique o arquivo e tente novamente.');
+      alert('Ocorreu um erro no processamento: ' + (err.message || 'Falha na leitura'));
     } finally {
       setIsProcessing(false);
     }
@@ -161,16 +171,85 @@ export function AiImportView({ onSuccessRedirect }: AiImportViewProps) {
         </div>
       )}
 
+      {/* BANNER DE STATUS DA IA */}
+      <div className={`p-4 rounded-2xl border text-xs ${
+        userApiKey
+          ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
+          : 'bg-indigo-50/70 border-indigo-200 text-indigo-950'
+      }`}>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
+              userApiKey ? 'bg-emerald-100 text-emerald-700' : 'bg-indigo-100 text-indigo-700'
+            }`}>
+              <Sparkles className="w-4 h-4 animate-pulse" />
+            </div>
+            <div>
+              <p className="font-bold flex items-center gap-2">
+                {userApiKey ? (
+                  <>
+                    <span>IA Google Gemini Ativa</span>
+                    <span className="text-[10px] bg-emerald-200 text-emerald-800 px-2 py-0.2 rounded-full font-bold">Conectada</span>
+                  </>
+                ) : (
+                  <>
+                    <span>Motor Especializado Ativo (Sem Chave)</span>
+                    <span className="text-[10px] bg-indigo-200 text-indigo-800 px-2 py-0.2 rounded-full font-bold">Local</span>
+                  </>
+                )}
+              </p>
+              <p className="text-[11px] text-slate-600 mt-0.5">
+                {userApiKey
+                  ? 'As faturas e comprovantes são analisados pelo modelo de visão e linguagem do Gemini.'
+                  : 'Para ativar o modelo de visão multimodal do Google Gemini, cole sua chave gratuita abaixo:'}
+              </p>
+            </div>
+          </div>
+
+          {/* Form de Chave Rápida se não configurada */}
+          {!userApiKey ? (
+            <form onSubmit={handleSaveApiKey} className="flex items-center gap-2 shrink-0">
+              <input
+                type="password"
+                value={tempApiKey}
+                onChange={(e) => setTempApiKey(e.target.value)}
+                placeholder="Cole sua Gemini API Key..."
+                className="px-3 py-1.5 rounded-xl border border-indigo-200 bg-white text-xs font-mono w-48 sm:w-56 focus:outline-none"
+              />
+              <button
+                type="submit"
+                disabled={!tempApiKey.trim()}
+                className="px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition-colors disabled:opacity-50"
+              >
+                Ativar
+              </button>
+            </form>
+          ) : (
+            <button
+              onClick={() => {
+                if (confirm('Deseja remover a chave configurada?')) {
+                  setUserApiKey('');
+                  setTempApiKey('');
+                }
+              }}
+              className="text-[11px] text-emerald-700 hover:underline font-semibold"
+            >
+              Alterar Chave
+            </button>
+          )}
+        </div>
+      </div>
+
       {/* Caixa de Entrada do Extrato / Fatura */}
       <div className="p-6 bg-white rounded-2xl border border-slate-200/80 shadow-xs space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h3 className="font-bold text-slate-900 text-base flex items-center gap-2">
               <Sparkles className="w-5 h-5 text-indigo-600" />
-              Importação Inteligente com IA
+              Importação Inteligente de Faturas & Extratos
             </h3>
             <p className="text-xs text-slate-500">
-              Envie extratos ou faturas (PDF, CSV, OFX, Imagens) ou cole o texto para lançamento automático categorizado
+              Envie sua fatura em PDF (C6 Bank, Nubank, Itaú, etc) ou extrato CSV/OFX para extração cirúrgica das compras reais
             </p>
           </div>
 
@@ -212,7 +291,7 @@ export function AiImportView({ onSuccessRedirect }: AiImportViewProps) {
                 {file ? file.name : 'Clique para selecionar seu extrato ou fatura'}
               </p>
               <p className="text-[11px] text-slate-400 mt-1">
-                Suporta PDF (faturas e extratos), CSV, OFX de todos os bancos brasileiros e comprovantes em imagem
+                Filtra automaticamente simulações de parcelamento, juros e cabeçalhos para extrair apenas compras reais
               </p>
               {file && (
                 <div className="mt-3 inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-100 text-indigo-800 text-xs font-semibold">
@@ -230,9 +309,9 @@ export function AiImportView({ onSuccessRedirect }: AiImportViewProps) {
               value={pastedText}
               onChange={(e) => setPastedText(e.target.value)}
               placeholder="Cole as linhas do extrato do app do banco aqui... Ex:
-05/11 Uber Trip R$ 24,90
-06/11 Mercado Carrefour R$ 180,50
-07/11 Pix Recebido Salario R$ 5.500,00"
+06 set SUPERMERCAD DO JANIO 47,26
+06 set AUTO POSTO INDUSTRIAL 48,31
+06 set PADARIA MORRO CHIC 59,00"
               className="w-full p-3 rounded-xl border border-slate-200 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 font-mono"
             />
           </div>
@@ -240,9 +319,9 @@ export function AiImportView({ onSuccessRedirect }: AiImportViewProps) {
 
         {/* Botão de Processamento */}
         <div className="flex items-center justify-between pt-2">
-          <div className="text-[11px] text-slate-400 flex items-center gap-1.5">
-            <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
-            <span>Processamento com IA e classificação automática em 80+ categorias</span>
+          <div className="text-[11px] text-slate-500 flex items-center gap-1.5">
+            <ShieldCheck className="w-4 h-4 text-emerald-600" />
+            <span>Filtro anti-ruído ativo: ignora taxas, limites e parcelamentos simulados</span>
           </div>
 
           <button
@@ -253,12 +332,12 @@ export function AiImportView({ onSuccessRedirect }: AiImportViewProps) {
             {isProcessing ? (
               <>
                 <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                Processando com IA...
+                Processando...
               </>
             ) : (
               <>
                 <Sparkles className="w-4 h-4" />
-                Analisar & Extrair Dados
+                Analisar & Extrair Compras
               </>
             )}
           </button>
@@ -271,16 +350,16 @@ export function AiImportView({ onSuccessRedirect }: AiImportViewProps) {
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
             <div>
               <div className="flex items-center gap-2">
-                <h4 className="font-bold text-slate-900 text-sm sm:text-base">Revisão de Lançamentos Identificados</h4>
+                <h4 className="font-bold text-slate-900 text-sm sm:text-base">Compras & Lançamentos Reais Identificados</h4>
                 <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-emerald-100 text-emerald-800">
-                  {extractedList.length} transações
+                  {extractedList.length} compras reais
                 </span>
                 <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-indigo-50 text-indigo-700">
-                  Via {sourceEngine}
+                  {sourceEngine}
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                Revise as categorias sugeridas antes de confirmar a importação
+                Total identificado na fatura: <strong className="text-slate-900 font-bold">{formatCurrency(totalAmountSelected)}</strong>
               </p>
             </div>
 
@@ -301,17 +380,17 @@ export function AiImportView({ onSuccessRedirect }: AiImportViewProps) {
                 }}
                 className="px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold bg-white text-slate-800 focus:outline-none"
               >
-                <optgroup label="Contas Bancárias">
-                  {accounts.map((acc) => (
-                    <option key={acc.id} value={`acc_${acc.id}`}>
-                      {acc.name}
-                    </option>
-                  ))}
-                </optgroup>
                 <optgroup label="Cartões de Crédito">
                   {creditCards.map((card) => (
                     <option key={card.id} value={`card_${card.id}`}>
                       {card.name}
+                    </option>
+                  ))}
+                </optgroup>
+                <optgroup label="Contas Bancárias">
+                  {accounts.map((acc) => (
+                    <option key={acc.id} value={`acc_${acc.id}`}>
+                      {acc.name}
                     </option>
                   ))}
                 </optgroup>
@@ -333,7 +412,7 @@ export function AiImportView({ onSuccessRedirect }: AiImportViewProps) {
                     />
                   </th>
                   <th className="py-2.5 px-3">Data</th>
-                  <th className="py-2.5 px-3">Descrição</th>
+                  <th className="py-2.5 px-3">Estabelecimento / Descrição</th>
                   <th className="py-2.5 px-3">Tipo</th>
                   <th className="py-2.5 px-3">Categoria Sugerida</th>
                   <th className="py-2.5 px-3 text-right">Valor</th>
@@ -363,7 +442,7 @@ export function AiImportView({ onSuccessRedirect }: AiImportViewProps) {
                         className="px-2 py-1 rounded-lg border border-slate-200 text-[11px] font-semibold bg-white"
                       >
                         <option value="expense">Despesa</option>
-                        <option value="income">Receita</option>
+                        <option value="income">Receita / Estorno</option>
                         <option value="investment">Investimento</option>
                         <option value="loss">Prejuízo</option>
                       </select>

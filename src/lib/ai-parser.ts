@@ -14,8 +14,8 @@ const PORTUGUESE_MONTHS: Record<string, string> = {
 export function guessCategoryAndType(description: string, rawAmount: number): { categoryId: string; categoryName: string; type: TransactionType; confidence: number } {
   const normalized = description.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
-  // Tratar estornos
-  if (normalized.includes('estorno')) {
+  // Tratar estornos e créditos
+  if (normalized.includes('estorno') || normalized.includes('credito na fatura')) {
     return {
       categoryId: 'cat_outras_receitas',
       categoryName: 'Outros Recebimentos',
@@ -172,11 +172,9 @@ export function parseCsv(csvContent: string): AiParsedTransaction[] {
 }
 
 /**
- * Parser de Texto Livre ou Extraído de Faturas em PDF / Extratos bancários
- * Suporta:
- * 1. Padrão C6 Bank / Nubank: "06 set SUPERMERCAD DO JANIO 47,26"
- * 2. Padrão com barras: "06/09/2026 AUTO POSTO R$ 150,00"
- * 3. Parcelamentos: "GOL LINHAS A*HBDGAM015 - Parcela 1/4 386,90"
+ * Parser Estrito de Faturas em PDF / Extratos bancários
+ * Extrai APENAS transações reais de compra e pagamento.
+ * Rejeita qualquer linha de simulação de parcelamento, CET, juros, limites e cabeçalhos.
  */
 export function parseRawText(text: string): AiParsedTransaction[] {
   const lines = text.split(/\r?\n/).map(line => line.trim()).filter(line => line.length > 0);
@@ -189,40 +187,38 @@ export function parseRawText(text: string): AiParsedTransaction[] {
     docYear = yearMatch[1].length === 2 ? `20${yearMatch[1]}` : yearMatch[1];
   }
 
-  // Padrão 1: "06 set DESCRIÇÃO DA COMPRA 47,26" (Padrão de Faturas C6 Bank, Santander, etc)
+  // Padrão 1: Linha que inicia com data textual: "06 set SUPERMERCAD DO JANIO 47,26" ou " 29 set Estorno 98,00"
   const textualDateRegex = /^(?:[•\-\*\s]*)(\d{1,2})\s+(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)\w*\s+(.+?)\s+(-?R?\$?\s*[\d\.]*,\d{2})$/i;
 
-  // Padrão 2: "06/09/2026 DESCRIÇÃO 47,26" ou "06/09 DESCRIÇÃO R$ 47,26"
+  // Padrão 2: Linha que inicia com data numérica: "06/09/2026 SUPERMERCADO 47,26" ou "06/09 POSTO 48,31"
   const slashDateRegex = /^(?:[•\-\*\s]*)(\d{1,2})[\/\.-](\d{1,2})(?:[\/\.-](\d{2,4}))?\s+(.+?)\s+(-?R?\$?\s*[\d\.]*,\d{2})$/i;
 
-  // Padrão 3: Genérico para linhas soltas com data e moeda
-  const genericDatePattern = /(\d{1,2}[\/\.-]\d{1,2}(?:[\/\.-]\d{2,4})?)/;
-  const genericCurrencyPattern = /(?:R\$\s*)?(-?\d{1,3}(?:\.\d{3})*,\d{2})/i;
+  // Expressão de exclusão estrita: se a linha contiver termos de simulação, parcelamento bancário ou taxas da fatura, IGNORAR!
+  const ignoreSimulationRegex = /entrada \+|parcelamento|juros do|cet do|iof do|limite total|saldo obrigações|total a pagar|pagamento mínimo|opções de pagamento|formas de pagamento|atenção|caso você não|encargos|recibo do pagador|débito automático|valor da fatura|subtotal deste|autenticação mecânica|ficha de compensação/i;
 
   for (const line of lines) {
-    // Ignorar cabeçalhos e linhas informativas conhecidas
-    if (
-      line.includes('Subtotal deste cartão') ||
-      line.includes('Transações do cartão') ||
-      line.includes('Valores em reais') ||
-      line.includes('Data do vencimento') ||
-      line.includes('Total a pagar') ||
-      line.includes('Limite de cartão') ||
-      line.includes('Opções de pagamento') ||
-      line.includes('Saldo obrigações')
-    ) {
+    // 1. Filtrar termos de simulação/marketing/cabeçalho da fatura
+    if (ignoreSimulationRegex.test(line)) {
       continue;
     }
 
-    // Tentar Padrão 1 (Textual: 06 set DESCRIÇÃO 47,26)
+    // 2. Tentar Padrão 1 (Textual: 06 set DESCRIÇÃO 47,26)
     const match1 = line.match(textualDateRegex);
     if (match1) {
       const day = match1[1].padStart(2, '0');
       const monthKey = match1[2].toLowerCase().substring(0, 3);
       const month = PORTUGUESE_MONTHS[monthKey] || '01';
-      const description = match1[3].trim();
+      let description = match1[3].trim();
       const rawAmtStr = match1[4].replace(/[R\$\s\.]/g, '').replace(',', '.');
       const amount = Math.abs(parseFloat(rawAmtStr));
+
+      // Limpar prefixos comuns como traços
+      description = description.replace(/^[•\-\|\*]\s*/, '').trim();
+
+      // Ignorar se a descrição for vazia ou for algum texto informativo
+      if (!description || description.length < 2 || description.toLowerCase().includes('subtotal')) {
+        continue;
+      }
 
       if (!isNaN(amount) && amount > 0) {
         const guess = guessCategoryAndType(description, amount);
@@ -241,16 +237,22 @@ export function parseRawText(text: string): AiParsedTransaction[] {
       }
     }
 
-    // Tentar Padrão 2 (Numérico: 06/09/2026 DESCRIÇÃO 47,26)
+    // 3. Tentar Padrão 2 (Numérico: 06/09/2026 DESCRIÇÃO 47,26)
     const match2 = line.match(slashDateRegex);
     if (match2) {
       const day = match2[1].padStart(2, '0');
       const month = match2[2].padStart(2, '0');
       let year = match2[3] || docYear;
       if (year.length === 2) year = `20${year}`;
-      const description = match2[4].trim();
+      let description = match2[4].trim();
       const rawAmtStr = match2[5].replace(/[R\$\s\.]/g, '').replace(',', '.');
       const amount = Math.abs(parseFloat(rawAmtStr));
+
+      description = description.replace(/^[•\-\|\*]\s*/, '').trim();
+
+      if (!description || description.length < 2 || description.toLowerCase().includes('subtotal')) {
+        continue;
+      }
 
       if (!isNaN(amount) && amount > 0) {
         const guess = guessCategoryAndType(description, amount);
@@ -267,44 +269,6 @@ export function parseRawText(text: string): AiParsedTransaction[] {
         });
         continue;
       }
-    }
-
-    // Tentar Padrão 3 (Genérico fallback)
-    const dateMatch = line.match(genericDatePattern);
-    const currencyMatch = line.match(genericCurrencyPattern);
-
-    if (dateMatch && currencyMatch) {
-      const rawAmountStr = currencyMatch[1].replace(/[R\$\s\.]/g, '').replace(',', '.');
-      const amount = Math.abs(parseFloat(rawAmountStr));
-
-      if (isNaN(amount) || amount === 0) continue;
-
-      const dateParts = dateMatch[1].split(/[\/\.-]/);
-      const day = dateParts[0].padStart(2, '0');
-      const month = dateParts[1].padStart(2, '0');
-      let year = dateParts[2] || docYear;
-      if (year.length === 2) year = `20${year}`;
-
-      let description = line
-        .replace(genericDatePattern, '')
-        .replace(genericCurrencyPattern, '')
-        .replace(/[•\-\|\*]/g, '')
-        .trim();
-
-      if (description.length < 2) description = 'Compra / Lançamento';
-
-      const guess = guessCategoryAndType(description, amount);
-      transactions.push({
-        id: generateId(),
-        date: `${year}-${month}-${day}`,
-        description,
-        amount,
-        type: guess.type,
-        categoryId: guess.categoryId,
-        categoryName: guess.categoryName,
-        confidence: guess.confidence,
-        selected: true,
-      });
     }
   }
 
